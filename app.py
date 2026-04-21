@@ -12,42 +12,50 @@ api_key = st.sidebar.text_input("أدخل Gemini API Key:", type="password")
 if api_key:
     try:
         genai.configure(api_key=api_key)
-        # استخدمنا نسخة برو المستقرة لضمان التشغيل
-        model = genai.GenerativeModel('gemini-1.5-pro')
+        
+        # --- خطوة البحث التلقائي عن الموديل المتاح ---
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        if not available_models:
+            st.error("للأسف مفيش موديلات متاحة للـ API Key ده.")
+        else:
+            # هنختار أول موديل flash متاح، ولو مفيش نختار أول واحد في القائمة
+            model_name = next((m for m in available_models if "flash" in m), available_models[0])
+            model = genai.GenerativeModel(model_name)
+            st.sidebar.success(f"متصل بـ: {model_name}")
 
-        user_query = st.chat_input("بماذا تأمر الموظف اليوم؟")
+            user_query = st.chat_input("بماذا تأمر الموظف اليوم يا مودو؟")
 
-        if user_query:
-            with st.chat_message("user"):
-                st.write(user_query)
-            
-            with st.chat_message("assistant"):
-                st.write("⏳ جاري استدعاء المتصفح وتحليل الطلب...")
+            if user_query:
+                with st.chat_message("user"):
+                    st.write(user_query)
                 
-                options = Options()
-                options.add_argument("--headless")
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-                options.binary_location = "/usr/bin/chromium"
-                
-                try:
-                    driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
+                with st.chat_message("assistant"):
+                    st.write("⏳ الموظف بيجهز المتصفح...")
                     
-                    # طلب الرابط من الموديل بطريقة أكيدة
-                    prompt = f"Give me ONLY the URL for this: {user_query}. No extra text."
-                    res = model.generate_content(prompt)
-                    url = res.text.strip()
+                    options = Options()
+                    options.add_argument("--headless")
+                    options.add_argument("--no-sandbox")
+                    options.add_argument("--disable-dev-shm-usage")
+                    options.binary_location = "/usr/bin/chromium"
                     
-                    if "http" not in url:
-                        url = f"https://www.google.com/search?q={url.replace(' ', '+')}"
-                    
-                    driver.get(url)
-                    st.write(f"✅ تم الدخول بنجاح: {url}")
-                    st.write(f"📄 عنوان الصفحة: {driver.title}")
-                    driver.quit()
-                except Exception as e:
-                    st.error(f"عطل في المحرك: {e}")
+                    try:
+                        driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
+                        
+                        # طلب الرابط
+                        prompt = f"Return ONLY the URL for: {user_query}. If not a URL, return a Google search link for it."
+                        res = model.generate_content(prompt)
+                        url = res.text.strip().split('\n')[0] # هناخد أول سطر بس
+                        
+                        if "http" not in url:
+                            url = f"https://www.google.com/search?q={url.replace(' ', '+')}"
+                        
+                        driver.get(url)
+                        st.write(f"✅ دخلت الموقع: {url}")
+                        st.write(f"📄 العنوان: {driver.title}")
+                        driver.quit()
+                    except Exception as e:
+                        st.error(f"مشكلة في المحرك: {e}")
     except Exception as e:
-        st.error(f"عطل في الـ API: {e}")
+        st.error(f"مشكلة في الاتصال: {e}")
 else:
-    st.info("حط الـ API Key في الجنب يا مودو.")
+    st.info("مستني الـ API Key في القائمة الجانبية.")
