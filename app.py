@@ -1,61 +1,41 @@
 import streamlit as st
 import google.generativeai as genai
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 
-st.set_page_config(page_title="Modo AI Agent", page_icon="🤖")
-st.title("🤖 موظف مودو الذكي")
+st.set_page_config(page_title="Modo Super AI", page_icon="⚡")
+st.title("🤖 موظف مودو السريع")
 
-api_key = st.sidebar.text_input("أدخل Gemini API Key:", type="password")
+# الـ API Key بتاعك مدمج
+api_key = st.sidebar.text_input("Gemini API Key", value="AIzaSyDMleQuDuJFdQOBlCUpzW82_Q_VDrRZn2E", type="password")
 
 if api_key:
     try:
         genai.configure(api_key=api_key)
         
-        # --- خطوة البحث التلقائي عن الموديل المتاح ---
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        if not available_models:
-            st.error("للأسف مفيش موديلات متاحة للـ API Key ده.")
-        else:
-            # هنختار أول موديل flash متاح، ولو مفيش نختار أول واحد في القائمة
-            model_name = next((m for m in available_models if "flash" in m), available_models[0])
-            model = genai.GenerativeModel(model_name)
-            st.sidebar.success(f"متصل بـ: {model_name}")
+        # تفعيل ميزة البحث من جوجل داخل الموديل مباشرة
+        model = genai.GenerativeModel(
+            model_name='gemini-1.5-flash',
+            tools=[{'google_search': {}}] 
+        )
 
-            user_query = st.chat_input("بماذا تأمر الموظف اليوم يا مودو؟")
+        user_query = st.chat_input("عايز تعرف أسعار إيه يا مودو؟")
 
-            if user_query:
-                with st.chat_message("user"):
-                    st.write(user_query)
-                
-                with st.chat_message("assistant"):
-                    st.write("⏳ الموظف بيجهز المتصفح...")
+        if user_query:
+            with st.chat_message("user"):
+                st.write(user_query)
+            
+            with st.chat_message("assistant"):
+                with st.spinner("⏳ جاري البحث في الأسواق المصرية..."):
+                    # الموديل هنا بيدخل يبحث في جوجل ويرد عليك بالأسعار الحقيقية
+                    response = model.generate_content(user_query)
+                    st.markdown(response.text)
                     
-                    options = Options()
-                    options.add_argument("--headless")
-                    options.add_argument("--no-sandbox")
-                    options.add_argument("--disable-dev-shm-usage")
-                    options.binary_location = "/usr/bin/chromium"
-                    
-                    try:
-                        driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
-                        
-                        # طلب الرابط
-                        prompt = f"Return ONLY the URL for: {user_query}. If not a URL, return a Google search link for it."
-                        res = model.generate_content(prompt)
-                        url = res.text.strip().split('\n')[0] # هناخد أول سطر بس
-                        
-                        if "http" not in url:
-                            url = f"https://www.google.com/search?q={url.replace(' ', '+')}"
-                        
-                        driver.get(url)
-                        st.write(f"✅ دخلت الموقع: {url}")
-                        st.write(f"📄 العنوان: {driver.title}")
-                        driver.quit()
-                    except Exception as e:
-                        st.error(f"مشكلة في المحرك: {e}")
+                    # إظهار المصادر اللي جاب منها الأسعار
+                    if response.candidates[0].grounding_metadata.search_entry_point:
+                        st.divider()
+                        st.caption("المصادر المباشرة:")
+                        st.html(response.candidates[0].grounding_metadata.search_entry_point.rendered_content)
+
     except Exception as e:
-        st.error(f"مشكلة في الاتصال: {e}")
+        st.error(f"حصلت مشكلة بسيطة: {e}")
 else:
-    st.info("مستني الـ API Key في القائمة الجانبية.")
+    st.info("حط الـ API Key في الجنب.")
