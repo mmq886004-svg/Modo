@@ -1,84 +1,61 @@
 import streamlit as st
-import json
 import google.generativeai as genai
-from playwright.sync_api import sync_playwright
-import os
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 
-# تثبيت المتصفح داخل بيئة السيرفر أوتوماتيكياً
-os.system("playwright install chromium")
+st.set_page_config(page_title="Modo AI Agent", page_icon="🤖")
+st.title("🤖 موظف مودو الذكي")
 
-st.set_page_config(page_title="Modo AI Playwright", page_icon="🤖")
-st.title("🤖 الموظف الذكي (نسخة الـ Scraper المحترف)")
-
-# ضع الـ API Key الخاص بك هنا بين القوسين
-api_key = st.sidebar.text_input("Gemini API Key", value="AIzaSyDMleQuDuJFdQOBlCUpzW82_Q_VDrRZn2E", type="password")
+api_key = st.sidebar.text_input("أدخل Gemini API Key:", type="password")
 
 if api_key:
     try:
         genai.configure(api_key=api_key)
         
-        # اختيار الموديل المستقر لضمان كوتا أكبر
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        st.sidebar.success("الموظف متصل وجاهز!")
+        # --- خطوة البحث التلقائي عن الموديل المتاح ---
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        if not available_models:
+            st.error("للأسف مفيش موديلات متاحة للـ API Key ده.")
+        else:
+            # هنختار أول موديل flash متاح، ولو مفيش نختار أول واحد في القائمة
+            model_name = next((m for m in available_models if "flash" in m), available_models[0])
+            model = genai.GenerativeModel(model_name)
+            st.sidebar.success(f"متصل بـ: {model_name}")
 
-        user_command = st.text_area("اكتب طلبك يا مودو:")
+            user_query = st.chat_input("بماذا تأمر الموظف اليوم يا مودو؟")
 
-        def plan_with_ai(command):
-            prompt = f"""
-            You are a web automation planner. Convert this request: '{command}' into JSON steps.
-            Actions: open (url), click (selector), type (selector, text), extract (selector), wait (seconds).
-            Rules: Return ONLY JSON. Use direct URLs for searching if possible.
-            Example: [{{ "action": "open", "url": "https://www.google.com" }}]
-            """
-            response = model.generate_content(prompt)
-            clean_json = response.text.replace("```json", "").replace("```", "").strip()
-            try:
-                return json.loads(clean_json)
-            except: return []
-
-        def run_steps(steps):
-            results = []
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
-                for step in steps:
-                    action = step.get("action")
+            if user_query:
+                with st.chat_message("user"):
+                    st.write(user_query)
+                
+                with st.chat_message("assistant"):
+                    st.write("⏳ الموظف بيجهز المتصفح...")
+                    
+                    options = Options()
+                    options.add_argument("--headless")
+                    options.add_argument("--no-sandbox")
+                    options.add_argument("--disable-dev-shm-usage")
+                    options.binary_location = "/usr/bin/chromium"
+                    
                     try:
-                        if action == "open":
-                            page.goto(step.get("url"), timeout=60000, wait_until="domcontentloaded")
-                        elif action == "click":
-                            page.click(step.get("selector"), timeout=5000)
-                        elif action == "type":
-                            page.fill(step.get("selector"), step.get("text"))
-                        elif action == "wait":
-                            page.wait_for_timeout(step.get("seconds", 2) * 1000)
-                        elif action == "extract":
-                            data = page.locator(step.get("selector")).all_text_contents()
-                            results.extend(data)
-                    except Exception as e:
-                        results.append(f"Error at {action}: {str(e)[:50]}")
-                browser.close()
-            return results
-
-        if st.button("تنفيذ المهمة 🚀"):
-            if user_command:
-                with st.status("🤖 جاري التخطيط والتنفيذ...") as s:
-                    steps = plan_with_ai(user_command)
-                    if steps:
-                        st.write("📋 الخطة:", steps)
-                        output = run_steps(steps)
-                        st.success("✅ تم سحب البيانات:")
-                        st.write(output)
+                        driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
                         
-                        # تلخيص البيانات النهائية
-                        context_text = " ".join(output)
-                        summary_prompt = f"بناءً على البيانات المستخرجة: {context_text[:2500]}، جاوب بدقة على طلب مودو: {user_command}. الرد بالعربي."
-                        final_res = model.generate_content(summary_prompt)
-                        st.markdown("### 💬 الرد النهائي:")
-                        st.info(final_res.text)
-                    else:
-                        st.error("فشل الموظف في فهم الخطوات، حاول توضيح الطلب.")
+                        # طلب الرابط
+                        prompt = f"Return ONLY the URL for: {user_query}. If not a URL, return a Google search link for it."
+                        res = model.generate_content(prompt)
+                        url = res.text.strip().split('\n')[0] # هناخد أول سطر بس
+                        
+                        if "http" not in url:
+                            url = f"https://www.google.com/search?q={url.replace(' ', '+')}"
+                        
+                        driver.get(url)
+                        st.write(f"✅ دخلت الموقع: {url}")
+                        st.write(f"📄 العنوان: {driver.title}")
+                        driver.quit()
+                    except Exception as e:
+                        st.error(f"مشكلة في المحرك: {e}")
     except Exception as e:
-        st.error(f"مشكلة تقنية: {e}")
+        st.error(f"مشكلة في الاتصال: {e}")
 else:
-    st.info("أدخل الـ API Key في القائمة الجانبية.")
+    st.info("مستني الـ API Key في القائمة الجانبية.")
