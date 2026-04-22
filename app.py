@@ -1,7 +1,12 @@
+```python
 import streamlit as st
 import json
 import google.generativeai as genai
 from playwright.sync_api import sync_playwright
+import os
+
+# تثبيت المتصفح داخل بيئة السيرفر
+os.system("playwright install chromium")
 
 st.set_page_config(page_title="Modo AI Playwright", page_icon="🤖")
 st.title("🤖 الموظف الذكي (نسخة الـ Scraper المحترف)")
@@ -12,7 +17,7 @@ if api_key:
     try:
         genai.configure(api_key=api_key)
         
-        # --- خطوة البحث التلقائي عن الموديل المتاح عشان نتفادى الـ 404 ---
+        # البحث التلقائي عن الموديل المتاح
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         if not available_models:
             st.error("الـ API Key ده مش لاقي موديلات شغالة.")
@@ -21,13 +26,13 @@ if api_key:
             model = genai.GenerativeModel(model_name)
             st.sidebar.success(f"متصل بـ: {model_name}")
 
-            user_command = st.text_area("اكتب طلبك (مثلاً: ادخل على Google وهات مواعيد ماتشات برشلونة):")
+            user_command = st.text_area("اكتب طلبك:")
 
             def plan_with_ai(command):
                 prompt = f"""
                 You are a web automation planner. Convert this request: '{command}' into JSON steps.
                 Actions: open (url), click (selector), type (selector, text), extract (selector), wait (seconds).
-                Output ONLY JSON.
+                Rules: Return ONLY JSON. Use direct URLs for searching if needed.
                 """
                 response = model.generate_content(prompt)
                 clean_json = response.text.replace("```json", "").replace("```", "").strip()
@@ -44,7 +49,7 @@ if api_key:
                         action = step.get("action")
                         try:
                             if action == "open":
-                                page.goto(step.get("url"), timeout=60000)
+                                page.goto(step.get("url"), timeout=60000, wait_until="domcontentloaded")
                             elif action == "click":
                                 page.click(step.get("selector"), timeout=5000)
                             elif action == "type":
@@ -61,16 +66,25 @@ if api_key:
 
             if st.button("تنفيذ المهمة 🚀"):
                 if user_command:
-                    with st.status("🤖 الموظف بيخطط وينفذ...") as s:
+                    with st.status("🤖 جاري العمل...") as s:
                         steps = plan_with_ai(user_command)
                         if steps:
-                            st.write("الخطة المتبعة:", steps)
+                            st.write("الخطة:", steps)
                             output = run_steps(steps)
-                            st.success("✅ النتائج اللي اتسحبت:")
+                            st.success("✅ البيانات المستخرجة:")
                             st.write(output)
+                            
+                            # دمج البيانات للتحليل
+                            context_text = " ".join(output)
+                            summary_prompt = f"بناءً على البيانات دي: {context_text[:2000]}، جاوب على: {user_command}"
+                            final_res = model.generate_content(summary_prompt)
+                            st.markdown("### 💬 الرد النهائي:")
+                            st.write(final_res.text)
                         else:
                             st.error("فشل في تحليل الطلب")
     except Exception as e:
-        st.error(f"مشكلة في الـ API: {e}")
+        st.error(f"مشكلة: {e}")
 else:
-    st.info("حط الـ API Key يا مودو")
+    st.info("حط الـ API Key")
+
+```
