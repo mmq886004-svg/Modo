@@ -4,6 +4,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from bs4 import BeautifulSoup
+import time
 
 st.set_page_config(page_title="Modo AI Agent", page_icon="🤖")
 st.title("🤖 موظف مودو الذكي")
@@ -26,41 +27,47 @@ if api_key:
             
             with st.chat_message("assistant"):
                 status = st.empty()
-                status.write("⏳ جاري البحث وفتح المتصفح...")
+                status.write("⏳ الموظف بيتحرك بحذر لتجنب الحظر...")
                 
                 options = Options()
                 options.add_argument("--headless")
                 options.add_argument("--no-sandbox")
+                options.add_argument("--disable-dev-shm-usage")
+                # --- التمويه هنا ---
+                options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
                 options.binary_location = "/usr/bin/chromium"
                 
                 try:
                     driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
                     
-                    # خطوة 1: تحديد الرابط
-                    prompt_url = f"Give me ONLY the best URL to answer this: {user_query}. Return only the URL."
+                    # طلب الرابط من جيمناي
+                    prompt_url = f"Give me ONLY a direct Wikipedia or News URL to answer: {user_query}. No Google search links."
                     res_url = model.generate_content(prompt_url)
                     url = res_url.text.strip().split('\n')[0]
                     
                     if "http" not in url:
-                        url = f"https://www.google.com/search?q={url.replace(' ', '+')}"
+                        url = f"https://ar.wikipedia.org/wiki/{url.replace(' ', '_')}"
                     
-                    # خطوة 2: دخول الموقع وسحب النص
+                    status.write(f"🌐 بدخل موقع: {url}...")
                     driver.get(url)
+                    time.sleep(2) # انتظار بسيط عشان الموقع يحمل
+                    
                     soup = BeautifulSoup(driver.page_source, 'html.parser')
-                    page_text = soup.get_text()[:2000] # هناخد أول 2000 حرف بس عشان السرعة
+                    # سحب النصوص المهمة فقط (البرجرافات)
+                    paragraphs = soup.find_all('p')
+                    page_text = " ".join([p.get_text() for p in paragraphs[:5]]) # أول 5 برجرافات
                     
-                    # خطوة 3: تلخيص المحتوى
-                    status.write(f"✅ دخلت موقع: {driver.title}.. جاري قراءة البيانات...")
-                    summary_prompt = f"Based on this text from the website: {page_text}, answer the user query: {user_query}. Answer in Arabic."
-                    final_res = model.generate_content(summary_prompt)
-                    
-                    st.markdown(f"### 📄 الرد المباشر:\n{final_res.text}")
-                    st.caption(f"المصدر: {url}")
-                    
-                    driver.quit()
+                    if len(page_text) < 50: # لو الموقع فاضي أو حظرنا
+                        st.warning("⚠️ الموقع ده محمي أو طلب CAPTCHA، هحاول بطريقة تانية...")
+                        driver.quit()
+                    else:
+                        summary_prompt = f"لخص المعلومات دي بالعربي عشان تجاوب مودو: {page_text}"
+                        final_res = model.generate_content(summary_prompt)
+                        st.markdown(f"### 📄 الرد:\n{final_res.text}")
+                        driver.quit()
                 except Exception as e:
-                    st.error(f"مشكلة في القراءة: {e}")
+                    st.error(f"مشكلة تقنية: {e}")
     except Exception as e:
-        st.error(f"مشكلة في الاتصال: {e}")
+        st.error(f"مشكلة في الـ API: {e}")
 else:
-    st.info("حط الـ API Key في الجنب عشان الموظف يبدأ الشغل!")
+    st.info("حط الـ API Key يا مودو.")
