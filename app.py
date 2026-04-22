@@ -1,73 +1,66 @@
 import streamlit as st
+import json
 import google.generativeai as genai
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from bs4 import BeautifulSoup
-import time
+from playwright.sync_api import sync_playwright
 
-st.set_page_config(page_title="Modo AI Agent", page_icon="🤖")
-st.title("🤖 موظف مودو الذكي")
+st.set_page_config(page_title="Modo AI Playwright", page_icon="🤖")
+st.title("🤖 الموظف الذكي (نسخة الـ Scraper المحترف)")
 
-api_key = st.sidebar.text_input("أدخل Gemini API Key:", type="password")
+api_key = st.sidebar.text_input("Gemini API Key", type="password")
 
 if api_key:
-    try:
-        genai.configure(api_key=api_key)
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        model_name = next((m for m in available_models if "flash" in m), available_models[0])
-        model = genai.GenerativeModel(model_name)
-        st.sidebar.success(f"متصل بـ: {model_name}")
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-1.5-flash")
 
-        user_query = st.chat_input("بماذا تأمر الموظف اليوم يا مودو؟")
+    user_command = st.text_area("اكتب طلبك (مثلاً: ادخل على ويكيبيديا وهات عناوين h1):")
 
-        if user_query:
-            with st.chat_message("user"):
-                st.write(user_query)
-            
-            with st.chat_message("assistant"):
-                status = st.empty()
-                status.write("⏳ الموظف بيتحرك بحذر لتجنب الحظر...")
-                
-                options = Options()
-                options.add_argument("--headless")
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-                # --- التمويه هنا ---
-                options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
-                options.binary_location = "/usr/bin/chromium"
-                
+    def plan_with_ai(command):
+        prompt = f"Convert this request into JSON steps: {command}. Actions: open, click, type, extract, wait. Output ONLY JSON."
+        response = model.generate_content(prompt)
+        # تنظيف الرد من أي علامات ماركداون
+        clean_json = response.text.replace("```json", "").replace("```", "").strip()
+        try:
+            return json.loads(clean_json)
+        except: return []
+
+    def run_steps(steps):
+        results = []
+        with sync_playwright() as p:
+            # تشغيل headless=True ضروري للسيرفر
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+
+            for step in steps:
+                action = step.get("action")
                 try:
-                    driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
-                    
-                    # طلب الرابط من جيمناي
-                    prompt_url = f"Give me ONLY a direct Wikipedia or News URL to answer: {user_query}. No Google search links."
-                    res_url = model.generate_content(prompt_url)
-                    url = res_url.text.strip().split('\n')[0]
-                    
-                    if "http" not in url:
-                        url = f"https://ar.wikipedia.org/wiki/{url.replace(' ', '_')}"
-                    
-                    status.write(f"🌐 بدخل موقع: {url}...")
-                    driver.get(url)
-                    time.sleep(2) # انتظار بسيط عشان الموقع يحمل
-                    
-                    soup = BeautifulSoup(driver.page_source, 'html.parser')
-                    # سحب النصوص المهمة فقط (البرجرافات)
-                    paragraphs = soup.find_all('p')
-                    page_text = " ".join([p.get_text() for p in paragraphs[:5]]) # أول 5 برجرافات
-                    
-                    if len(page_text) < 50: # لو الموقع فاضي أو حظرنا
-                        st.warning("⚠️ الموقع ده محمي أو طلب CAPTCHA، هحاول بطريقة تانية...")
-                        driver.quit()
-                    else:
-                        summary_prompt = f"لخص المعلومات دي بالعربي عشان تجاوب مودو: {page_text}"
-                        final_res = model.generate_content(summary_prompt)
-                        st.markdown(f"### 📄 الرد:\n{final_res.text}")
-                        driver.quit()
+                    if action == "open":
+                        page.goto(step.get("url"), timeout=60000)
+                    elif action == "click":
+                        page.click(step.get("selector"), timeout=5000)
+                    elif action == "type":
+                        page.fill(step.get("selector"), step.get("text"))
+                    elif action == "wait":
+                        page.wait_for_timeout(step.get("seconds", 2) * 1000)
+                    elif action == "extract":
+                        # سحب النصوص بناءً على السليكتور
+                        data = page.locator(step.get("selector")).all_text_contents()
+                        results.extend(data)
                 except Exception as e:
-                    st.error(f"مشكلة تقنية: {e}")
-    except Exception as e:
-        st.error(f"مشكلة في الـ API: {e}")
+                    results.append(f"Error at {action}: {str(e)[:50]}")
+            
+            browser.close()
+        return results
+
+    if st.button("تنفيذ المهمة 🚀"):
+        if user_command:
+            st.info("🤖 الموظف بيفكر في الخطوات...")
+            steps = plan_with_ai(user_command)
+            if steps:
+                st.json(steps)
+                st.info("⚙️ جاري سحب البيانات بالكامل...")
+                output = run_steps(steps)
+                st.success("✅ البيانات اللي اتسحبت:")
+                st.write(output)
+            else: st.error("فشل في تحليل الطلب")
 else:
-    st.info("حط الـ API Key يا مودو.")
+    st.info("حط الـ API Key يا مودو")
